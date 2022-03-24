@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -12,19 +13,19 @@ import (
 	"strings"
 )
 
-type Test struct {
-	name string
-	urls []string
-	code int
-	body string
-}
-
 type smtpInfo struct {
 	username string
 	password string
 	to       string
 	host     string
 	port     string
+}
+
+type Check struct {
+	Name string   `json:"name"`
+	Urls []string `json:"urls"`
+	Code int      `json:"code"`
+	Body string   `json:"body"`
 }
 
 const SmtpUsernameEnvName = "SMTP_USERNAME"
@@ -34,75 +35,27 @@ const SmtpHost = "smtp.gmail.com"
 const SmtpPort = "587"
 const LogFilePath = "/var/log/lets-go-check.log"
 
-var tests = []Test{
-	{
-		name: "Main website",
-		urls: []string{
-			"https://www.cristianaldea.com",
-			"https://cristianaldea.com",
-			"http://www.cristianaldea.com",
-		},
-		code: 200,
-		body: "Today is a gift!",
-	},
-	{
-		name: "Starlog",
-		urls: []string{
-			"https://blog.cristianaldea.com",
-			"http://blog.cristianaldea.com",
-		},
-		code: 200,
-		body: "Welcome to ⭐ Starlog ⭐",
-	},
-	{
-		name: "VoteIt",
-		urls: []string{
-			"https://voteit.cristianaldea.com",
-			"http://voteit.cristianaldea.com",
-			"https://voteit.cristianaldea.com/create-poll",
-		},
-		code: 200,
-		body: "The place to create poll easily, quickly, and with no signup!",
-	},
-	{
-		name: "VoteIt API",
-		urls: []string{
-			"https://api.voteit.cristianaldea.com/api/healthz",
-		},
-		code: 204,
-		body: "",
-	},
-	{
-		name: "Mull Recognition",
-		urls: []string{
-			"https://mull.cristianaldea.com",
-			"http://mull.cristianaldea.com",
-		},
-		code: 200,
-		body: "A standalone application for detecting waste!",
-	},
-}
-
 func main() {
 	logFile, err := os.OpenFile(LogFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0666)
 	if err != nil {
-		log.Fatalf("main - ERROR: Unable to open file %s. %v", LogFilePath, err)
+		log.Fatalf("main - ERROR - Unable to open file %s. %v", LogFilePath, err)
 	}
 
 	log.SetOutput(io.MultiWriter(os.Stdout, logFile))
 
 	emailTo := flag.String("email-to", "", "Recipient for email alert when applications are down")
+	configPath := flag.String("config-path", "checks.json", "Path to the file with the configuration for the checks to run")
 	flag.Parse()
 
 	if *emailTo == "" {
-		log.Fatalf("main - ERROR: The program flag --%s is required", EmailToFlagName)
+		log.Fatalf("main - ERROR - The program flag --%s is required", EmailToFlagName)
 	}
 
 	smtpUsername := os.Getenv(SmtpUsernameEnvName)
 	smtpPassword := os.Getenv(SmtpPasswordEnvName)
 
 	if smtpUsername == "" || smtpPassword == "" {
-		log.Fatalf("main - ERROR: Please specify the environment variables %s and %s", SmtpUsernameEnvName, SmtpPasswordEnvName)
+		log.Fatalf("main - ERROR - Please specify the environment variables %s and %s", SmtpUsernameEnvName, SmtpPasswordEnvName)
 	}
 
 	info := smtpInfo{
@@ -113,37 +66,39 @@ func main() {
 		port:     SmtpPort,
 	}
 
-	log.Println("main: Starting Tests!")
-	for _, test := range tests {
-		log.Printf("main - %s: Test started", test.name)
+	log.Printf("main - Reading checks configuration under %s", *configPath)
+	var checks []Check
 
-		for _, url := range test.urls {
+	readConfig(*configPath, &checks)
+
+	log.Println("main - Starting Tests!")
+	for _, check := range checks {
+		log.Printf("main - %s: Test started", check.Name)
+
+		for _, url := range check.Urls {
 			resp, err := http.Get(url)
 			if err != nil {
-				processRequestFailure(fmt.Sprintf("URL: %s\nERROR: Request failed. Details: %v", url, err), info)
+				processRequestFailure(fmt.Sprintf("URL: %s\nERROR: Request failed. %v", url, err), info)
 			}
 
-			if test.code != resp.StatusCode {
-				processRequestFailure(fmt.Sprintf("URL: %s\nERROR: Wrong status code (Expected: %d, Received: %d)", url, test.code, resp.StatusCode), info)
+			if check.Code != resp.StatusCode {
+				processRequestFailure(fmt.Sprintf("URL: %s\nERROR: Wrong status code (Expected: %d, Received: %d)", url, check.Code, resp.StatusCode), info)
 			}
 
 			rawBody, _ := ioutil.ReadAll(resp.Body)
 			respBody := string(rawBody)
 
-			if test.body != "" && !strings.Contains(respBody, test.body) {
-				processRequestFailure(fmt.Sprintf("URL: %s\nERROR: Body doesn't contain expected content: \"%s\"", url, test.body), info)
-				log.Fatalf("main - %s - ERROR - Body doesn't contain expected content: \"%s\"", test.name, test.body)
+			if check.Body != "" && !strings.Contains(respBody, check.Body) {
+				processRequestFailure(fmt.Sprintf("URL: %s\nERROR: Body doesn't contain expected content: \"%s\"", url, check.Body), info)
 			}
 		}
-
-		log.Printf("main - %s - Test completed successfully", test.name)
+		log.Printf("main - %s - Test completed successfully", check.Name)
 	}
 }
 
 func processRequestFailure(message string, info smtpInfo) {
-	log.Printf("processRequestFailure - ERROR - %s. Sending alert", message)
 	sendAlert(message, info)
-	os.Exit(1)
+	log.Fatalf("processRequestFailure - ERROR - %s", message)
 }
 
 func sendAlert(body string, info smtpInfo) {
@@ -160,5 +115,25 @@ func sendAlert(body string, info smtpInfo) {
 		log.Printf("sendAlert - ERROR - %v", err)
 	} else {
 		log.Print("sendAlert - Email sent successfully!")
+	}
+}
+
+func readConfig(path string, checks *[]Check) {
+	jsonFile, err := os.Open(path)
+
+	if err != nil {
+		log.Fatalf("readConfig - ERROR - Failed to open file under %s. %v", path, err)
+	}
+	defer jsonFile.Close()
+
+	jsonRaw, err := ioutil.ReadAll(jsonFile)
+
+	if err != nil {
+		log.Fatalf("readConfig - ERROR - Failed to read file under %s. %v", path, err)
+	}
+
+	err = json.Unmarshal(jsonRaw, checks)
+	if err != nil {
+		log.Fatalf("readConfig - ERROR - Failed to parse JSON. %v", err)
 	}
 }

@@ -1,0 +1,48 @@
+[
+  {
+    "name": "Main website",
+    "urls": [
+      "https://www.cristianaldea.com",
+      "https://cristianaldea.com",
+      "http://www.cristianaldea.com"
+    ],
+    "code": 200,
+    "body": "Cristian Aldea's main portfolio website"
+  },
+  {
+    "name": "Starlog",
+    "urls": [
+      "https://blog.cristianaldea.com",
+      "http://blog.cristianaldea.com"
+    ],
+    "code": 200,
+    "body": "Cristian Aldea's Blog"
+  },
+  {
+    "name": "VoteIt",
+    "urls": [
+      "https://voteit.cristianaldea.com",
+      "http://voteit.cristianaldea.com",
+      "https://voteit.cristianaldea.com/create-poll"
+    ],
+    "code": 200,
+    "body": "The place to create poll quickly, easily, and with no signup!"
+  },
+  {
+    "name": "VoteIt API",
+    "urls": [
+      "https://api.voteit.cristianaldea.com/api/healthz"
+    ],
+    "code": 204,
+    "body": ""
+  },
+  {
+    "name": "Mull Recognition",
+    "urls": [
+      "https://mull.cristianaldea.com",
+      "http://mull.cristianaldea.com"
+    ],
+    "code": 200,
+    "body": "A machine-learning tool for detecting and categorizing waste!"
+  }
+]
