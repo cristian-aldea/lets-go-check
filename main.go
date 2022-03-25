@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/smtp"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -33,19 +34,21 @@ const SmtpPasswordEnvName = "SMTP_PASSWORD"
 const EmailToFlagName = "email-to"
 const SmtpHost = "smtp.gmail.com"
 const SmtpPort = "587"
-const LogFilePath = "/var/log/lets-go-check.log"
+
+var executablePath, _ = os.Executable()
+var executableDir = filepath.Dir(executablePath)
+var logFilePath = executableDir + "/lets-go-check.log"
 
 func main() {
-	logFile, err := os.OpenFile(LogFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0666)
-	if err != nil {
-		log.Fatalf("main - ERROR - Unable to open file %s. %v", LogFilePath, err)
-	}
-
-	log.SetOutput(io.MultiWriter(os.Stdout, logFile))
-
 	emailTo := flag.String("email-to", "", "Recipient for email alert when applications are down")
-	configPath := flag.String("config-path", "checks.json", "Path to the file with the configuration for the checks to run")
+	configPath := flag.String("config-path", executableDir+"/checks.json", "Path to the file with the configuration for the checks to run")
 	flag.Parse()
+
+	logFile, err := os.OpenFile(logFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0666)
+	if err != nil {
+		log.Fatalf("main - ERROR - Unable to open file %s. %v", logFilePath, err)
+	}
+	log.SetOutput(io.MultiWriter(os.Stdout, logFile))
 
 	if *emailTo == "" {
 		log.Fatalf("main - ERROR - The program flag --%s is required", EmailToFlagName)
@@ -66,39 +69,37 @@ func main() {
 		port:     SmtpPort,
 	}
 
-	log.Printf("main - Reading checks configuration under %s", *configPath)
 	var checks []Check
-
 	readConfig(*configPath, &checks)
 
-	log.Println("main - Starting Tests!")
+	log.Println("main - Running checks")
 	for _, check := range checks {
-		log.Printf("main - %s: Test started", check.Name)
-
 		for _, url := range check.Urls {
 			resp, err := http.Get(url)
 			if err != nil {
-				processRequestFailure(fmt.Sprintf("URL: %s\nERROR: Request failed. %v", url, err), info)
+				processCheckFailure(fmt.Sprintf("Request failed for %s: %v", url, err), info)
 			}
 
 			if check.Code != resp.StatusCode {
-				processRequestFailure(fmt.Sprintf("URL: %s\nERROR: Wrong status code (Expected: %d, Received: %d)", url, check.Code, resp.StatusCode), info)
+				processCheckFailure(fmt.Sprintf("Wrong status code for %s: Expected %d, received %d", url, check.Code, resp.StatusCode), info)
 			}
 
 			rawBody, _ := ioutil.ReadAll(resp.Body)
 			respBody := string(rawBody)
 
 			if check.Body != "" && !strings.Contains(respBody, check.Body) {
-				processRequestFailure(fmt.Sprintf("URL: %s\nERROR: Body doesn't contain expected content: \"%s\"", url, check.Body), info)
+				processCheckFailure(fmt.Sprintf("Response from %s doesn't contain expected content: \"%s\"", url, check.Body), info)
 			}
 		}
-		log.Printf("main - %s - Test completed successfully", check.Name)
+
 	}
+	log.Println("main - All checks passed! Closing application.")
 }
 
-func processRequestFailure(message string, info smtpInfo) {
+func processCheckFailure(message string, info smtpInfo) {
 	sendAlert(message, info)
-	log.Fatalf("processRequestFailure - ERROR - %s", message)
+	log.Printf("processCheckFailure - ERROR - %s", message)
+	log.Fatalf("processCheckFailure - ERROR - Alert has been sent. Exiting")
 }
 
 func sendAlert(body string, info smtpInfo) {
@@ -108,13 +109,10 @@ func sendAlert(body string, info smtpInfo) {
 		"Subject: lets-go-check Alert\r\n\r\n" +
 		body + "\r\n"
 
-	log.Printf("sendAlert - Sending alert to %s", info.to)
 	err := smtp.SendMail(SmtpHost+":"+SmtpPort, auth, info.username, []string{info.to}, []byte(message))
 
 	if err != nil {
-		log.Printf("sendAlert - ERROR - %v", err)
-	} else {
-		log.Print("sendAlert - Email sent successfully!")
+		log.Fatalf("sendAlert - ERROR - failed to send email. %v", err)
 	}
 }
 
@@ -124,7 +122,12 @@ func readConfig(path string, checks *[]Check) {
 	if err != nil {
 		log.Fatalf("readConfig - ERROR - Failed to open file under %s. %v", path, err)
 	}
-	defer jsonFile.Close()
+	defer func(jsonFile *os.File) {
+		err := jsonFile.Close()
+		if err != nil {
+			log.Fatalf("readConfig - Failed to close file %s", path)
+		}
+	}(jsonFile)
 
 	jsonRaw, err := ioutil.ReadAll(jsonFile)
 
