@@ -72,48 +72,43 @@ func main() {
 	var checks []Check
 	readConfig(*configPath, &checks)
 
-	log.Println("main - Running checks")
 	for _, check := range checks {
 		for _, url := range check.Urls {
 			resp, err := http.Get(url)
 			if err != nil {
-				processCheckFailure(fmt.Sprintf("Request failed for %s: %v", url, err), info)
+				sendAlert(fmt.Sprintf("Request failed for %s: %v", url, err), info)
 			}
 
 			if check.Code != resp.StatusCode {
-				processCheckFailure(fmt.Sprintf("Wrong status code for %s: Expected %d, received %d", url, check.Code, resp.StatusCode), info)
+				sendAlert(fmt.Sprintf("Wrong status code for %s: Expected %d, received %d", url, check.Code, resp.StatusCode), info)
 			}
 
 			rawBody, _ := ioutil.ReadAll(resp.Body)
 			respBody := string(rawBody)
 
 			if check.Body != "" && !strings.Contains(respBody, check.Body) {
-				processCheckFailure(fmt.Sprintf("Response from %s doesn't contain expected content: \"%s\"", url, check.Body), info)
+				sendAlert(fmt.Sprintf("Response from %s doesn't contain expected content: \"%s\"", url, check.Body), info)
 			}
 		}
 
 	}
-	log.Println("main - All checks passed! Closing application.")
+	log.Println("main - All checks passed! Exiting...")
 }
 
-func processCheckFailure(message string, info smtpInfo) {
-	sendAlert(message, info)
-	log.Printf("processCheckFailure - ERROR - %s", message)
-	log.Fatalf("processCheckFailure - ERROR - Alert has been sent. Exiting")
-}
-
-func sendAlert(body string, info smtpInfo) {
+func sendAlert(errorMessage string, info smtpInfo) {
 	auth := smtp.PlainAuth("", info.username, info.password, SmtpHost)
 	message := "From: " + info.username + "\r\n" +
 		"To: " + info.to + "\r\n" +
 		"Subject: lets-go-check Alert\r\n\r\n" +
-		body + "\r\n"
+		errorMessage + "\r\n"
 
 	err := smtp.SendMail(SmtpHost+":"+SmtpPort, auth, info.username, []string{info.to}, []byte(message))
 
 	if err != nil {
 		log.Fatalf("sendAlert - ERROR - failed to send email. %v", err)
 	}
+
+	log.Fatalf("sendAlert - ERROR - Alert for \"%s\" has been sent. Exiting...", errorMessage)
 }
 
 func readConfig(path string, checks *[]Check) {
