@@ -35,7 +35,7 @@ Current a bash script is available for sending the necessary files to a server s
 
 To deploy the application to a remote server:
 ```bash
-bash ./deploy.sh SOURCE DESTINATION
+bash ./deploy.sh . DESTINATION
 ```
 Where:
 - SOURCE: the project folder
